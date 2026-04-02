@@ -33,7 +33,7 @@ def answer_question_over_collection(
     if not hits:
         return (
             "No indexed photos found in ChromaDB (empty collection or wrong path/name). "
-            "Run `python run.py` first to index descriptions."
+            "Run `python extract_photos.py` first to index descriptions."
         )
 
     lines = []

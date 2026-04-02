@@ -1,8 +1,12 @@
-# google_photos
+# Basic Photo Description Vector Embeddings and Search
 
-Use the **[Google Photos Picker API](https://developers.google.com/photos/picker/guides/get-started-picker)** to choose photos or videos in the Google Photos UI, resize thumbnails to 448×448, run a local **Ollama** vision model (**llama3.2-vision** by default), and optionally store descriptions + embeddings in **ChromaDB**.
+This project has two parts:
 
-**Policy context:** Google [no longer allows](https://developers.google.com/photos/support/updates) bulk listing of a user’s full library via the Library API for typical apps. This project uses only the **Picker** flow so users explicitly select what to process.
+1. **Extract & embed** — Use the **[Google Photos Picker API](https://developers.google.com/photos/picker/guides/get-started-picker)** to choose photos or videos in the Google Photos UI. Each image is described by a local **Ollama** vision model (**llama3.2-vision** by default). That text is embedded with **Ollama** and stored in **ChromaDB** (HNSW index, cosine distance) together with **`mediaItemId`** and optional location metadata.
+
+2. **Search** — Run **`query_photos.py`** against the same index: **semantic search** (ranked photos + Google Photos links) or **RAG-style answers** over your descriptions, routed by a small **Ollama** text model.
+
+**Policy context:** Google [no longer allows](https://developers.google.com/photos/support/updates) bulk listing of a user’s full library via the Library API for typical apps. This project uses only the **Picker** flow so you explicitly select what gets indexed and searched.
 
 ## Setup
 
@@ -17,8 +21,8 @@ pip install -r requirements.txt
 
 - **google-auth-oauthlib** — OAuth for Google APIs
 - **google-api-python-client** — Google API client (Picker API uses dynamic discovery; network required once)
-- **chromadb** — vector store for vision descriptions
-- **ollama** — local LLM client
+- **chromadb** — vector store for vision descriptions and embeddings
+- **ollama** — local LLM client (vision, embeddings, routing, RAG)
 - **Pillow** — image resizing
 
 ## Google Cloud & Ollama
@@ -43,13 +47,11 @@ Install [Ollama](https://ollama.com/) and ensure it is running.
 ollama pull llama3.2-vision
 ```
 
-**Embedding model** (ChromaDB text vectors; override with `--embed-model` / `OLLAMA_EMBED_MODEL`). **Pull this** before the first run unless you use `--no-chroma`:
+**Embedding model** (required for ChromaDB vectors; override with `--embed-model` / `OLLAMA_EMBED_MODEL`):
 
 ```bash
 ollama pull nomic-embed-text
 ```
-
-If Ollama reports that `nomic-embed-text` is missing, run the command above while Ollama is running.
 
 **Text / chat model** (default `llama3.2`): used to **route** plain `query_photos.py` input (search vs RAG) and to **answer** RAG questions. One pull covers both unless you set a different `OLLAMA_ROUTER_MODEL`.
 
@@ -57,24 +59,24 @@ If Ollama reports that `nomic-embed-text` is missing, run the command above whil
 ollama pull llama3.2
 ```
 
-### 3. Run
+### 3. Extract
 
 ```bash
-python run.py
+python extract_photos.py
 ```
 
-A browser opens the Google Photos picker; select items, finish in Photos, then the app downloads thumbnails, runs vision, and (by default) upserts into Chroma.
+A browser opens the Google Photos picker; select items, finish in Photos. The app downloads thumbnails, runs vision, **embeds each description**, and **writes every result to ChromaDB** (defaults: `data/chroma_db`, collection `gphotos_vision`).
 
-### 4. Query the index (separate from ingest)
+### 4. Query the index
 
-Use the same Chroma path/collection and embedding model as indexing (defaults match `run.py`).
+Use the same Chroma path/collection and embedding model as extract (defaults match `extract_photos.py`).
 
 Pass **plain text**. An **Ollama LLM** (router) classifies the message as either:
 
 - **search** — find ranked photos (keywords, scenes, “show me…”) → prints **`mediaItemId`**, **Google Photos** URL, description snippet.
 - **ask** — answer a question across descriptions (RAG) → prints prose.
 
-If the router model is missing, unreachable, or returns invalid JSON, the command **fails with an error** (no rule-based fallback).
+If the router model is missing, unreachable, or returns invalid JSON, the command **fails with an error**.
 
 ```bash
 python query_photos.py birthday cake indoors
@@ -85,13 +87,13 @@ python query_photos.py Which countries have I eaten cake in?
 
 Tune retrieval with `--top-k` (default **10** for search, **24** for ask). For RAG answers, `--chat-model` / `OLLAMA_CHAT_MODEL` selects the synthesis model.
 
-## What it does
+## What extract does
 
 1. Creates a Picker **session**, opens **`pickerUri`** (with `/autoclose` unless `--picker-no-autoclose`).
 2. Polls until you finish picking.
-3. Lists selected media, runs download → Ollama vision → optional **ChromaDB** upsert (`mediaItemId` as id, HNSW/cosine, Ollama embeddings of the description). If the API provides **location** metadata, **latitude** / **longitude** / **location_name** / **has_location** are stored when possible.
+3. Lists selected media, runs download → Ollama vision → **ChromaDB upsert** (`mediaItemId` as id, HNSW/cosine, Ollama embeddings of the description). If the API provides **location** metadata, **latitude** / **longitude** / **location_name** / **has_location** are stored when possible.
 
-## Command-line options
+## Command-line options (`extract_photos.py`)
 
 | Option | Description |
 |--------|-------------|
@@ -101,7 +103,6 @@ Tune retrieval with `--top-k` (default **10** for search, **24** for ask). For R
 | `--user-prompt` | User message with the image (default: `Describe this image.`) |
 | `--model` | Ollama vision model (default `llama3.2-vision` or `OLLAMA_VISION_MODEL`) |
 | `--picker-no-autoclose` | Don’t append `/autoclose` to the picker URL |
-| `--no-chroma` | Don’t write to ChromaDB |
 | `--chroma-path` | Chroma persist directory (default `data/chroma_db`) |
 | `--chroma-collection` | Collection name (default `gphotos_vision`) |
 | `--embed-model` | Ollama embedding model (default `nomic-embed-text`) |
@@ -115,7 +116,7 @@ Tune retrieval with `--top-k` (default **10** for search, **24** for ask). For R
 | `--search` / `--ask` | Force semantic search or RAG (skip LLM router) |
 | `--router-model` | Ollama model for routing (default `OLLAMA_ROUTER_MODEL`) |
 | `--top-k` | Vectors to retrieve (defaults: 10 / 24 by mode) |
-| `--chroma-path`, `--chroma-collection`, `--embed-model` | Same as `run.py` |
+| `--chroma-path`, `--chroma-collection`, `--embed-model` | Same as `extract_photos.py` |
 | `--chat-model` | Ollama model for RAG answers (`OLLAMA_CHAT_MODEL`) |
 
 ## Environment variables (optional)

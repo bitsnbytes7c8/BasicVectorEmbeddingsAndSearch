@@ -32,7 +32,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    p = argparse.ArgumentParser(description="Google Photos Picker → Ollama vision pipeline")
+    p = argparse.ArgumentParser(
+        description="Google Photos Picker → vision descriptions → ChromaDB vector embeddings",
+    )
     p.add_argument("--client-secret", default=DEFAULT_CLIENT_SECRET, help="OAuth client JSON path")
     p.add_argument("--token", default=DEFAULT_TOKEN_PATH, help="Saved OAuth token path")
     p.add_argument(
@@ -52,11 +54,6 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--verbose",
         action="store_true",
         help="Debug logging.",
-    )
-    p.add_argument(
-        "--no-chroma",
-        action="store_true",
-        help="Skip writing vision descriptions to ChromaDB.",
     )
     p.add_argument(
         "--chroma-path",
@@ -91,27 +88,24 @@ def main(argv: Optional[list[str]] = None) -> None:
         logger.info("No media selected or picker returned nothing; exiting.")
         return
 
-    chroma: VisionChromaStore | None = None
-    if not args.no_chroma:
-        chroma = VisionChromaStore(
-            args.chroma_path,
-            args.chroma_collection,
-            args.embed_model,
-        )
-        logger.info(
-            "ChromaDB: path=%s collection=%s hnsw=cosine embed_model=%s",
-            args.chroma_path,
-            args.chroma_collection,
-            args.embed_model,
-        )
+    chroma = VisionChromaStore(
+        args.chroma_path,
+        args.chroma_collection,
+        args.embed_model,
+    )
+    logger.info(
+        "ChromaDB: path=%s collection=%s hnsw=cosine embed_model=%s",
+        args.chroma_path,
+        args.chroma_collection,
+        args.embed_model,
+    )
 
     def on_ok(photo: PhotoRef, text: str) -> None:
         logger.info("[%s] vision output: %s", photo.media_item_id, text[:500])
-        if chroma is not None:
-            try:
-                chroma.upsert_description(photo, text)
-            except Exception as e:
-                logger.exception("[%s] ChromaDB upsert failed: %s", photo.media_item_id, e)
+        try:
+            chroma.upsert_description(photo, text)
+        except Exception as e:
+            logger.exception("[%s] ChromaDB upsert failed: %s", photo.media_item_id, e)
 
     def on_err(photo: PhotoRef, err: BaseException) -> None:
         logger.error("[%s] error: %s", photo.media_item_id, err)

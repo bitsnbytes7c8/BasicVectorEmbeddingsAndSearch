@@ -36,7 +36,7 @@ def open_vision_collection(
     except Exception as e:
         raise RuntimeError(
             f"Cannot open Chroma collection {collection_name!r} at {persist_directory!r}. "
-            "Run `python run.py` first to create the index, or fix --chroma-path / --chroma-collection."
+            "Run `python extract_photos.py` first to create the index, or fix --chroma-path / --chroma-collection."
         ) from e
 
 
