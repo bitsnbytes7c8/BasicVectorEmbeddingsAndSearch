@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite
+data/chroma_db/
+token.json
+# Google OAuth client — never commit
+client_secret.json
+client_secrent.json
+credentials.json
+.DS_Store
